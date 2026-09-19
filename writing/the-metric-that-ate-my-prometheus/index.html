@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The metric that quietly ate my Prometheus — Alvaro Carvalho</title>
+<meta name="description" content="A slow, silent Prometheus memory ramp turned out to be a client-side cardinality leak that grew with pod age. Here is how I tracked it down.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f6;
+    --text: #14203a; --muted: #566072; --border: rgba(20,32,58,0.12);
+    --accent: #0c9c8a; --accent-soft: rgba(12,156,138,0.12); --warm: #c0692a;
+    --code-bg: #f2f4f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1420; --surface: #161f2e; --surface-2: #1c2740;
+      --text: #e7ecf4; --muted: #93a1b8; --border: rgba(255,255,255,0.09);
+      --accent: #55d6c2; --accent-soft: rgba(85,214,194,0.13); --warm: #f2a65a;
+      --code-bg: #10192a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1420; --surface: #161f2e; --surface-2: #1c2740;
+    --text: #e7ecf4; --muted: #93a1b8; --border: rgba(255,255,255,0.09);
+    --accent: #55d6c2; --accent-soft: rgba(85,214,194,0.13); --warm: #f2a65a;
+    --code-bg: #10192a;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 17px; line-height: 1.7; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { width: 100%; max-width: 720px; margin: 0 auto; padding: 0 24px; }
+
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
+  }
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 60px; max-width: 720px; margin: 0 auto; padding: 0 24px; }
+  .brand { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 1.02rem; letter-spacing: -0.01em; display: flex; align-items: center; gap: 9px; color: var(--text); }
+  .brand:hover { text-decoration: none; }
+  .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--accent-soft); animation: pulse 2.6s ease-out infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--accent-soft); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+  nav { display: flex; align-items: center; gap: 22px; }
+  nav a { color: var(--muted); font-size: 0.92rem; transition: color 0.15s; }
+  nav a:hover { color: var(--text); text-decoration: none; }
+  .theme-btn { background: none; border: 1px solid var(--border); color: var(--muted); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: grid; place-items: center; }
+  .theme-btn:hover { color: var(--text); border-color: var(--muted); }
+
+  article { padding: 52px 0 20px; }
+  .eyebrow { color: var(--accent); font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; margin-bottom: 14px; }
+  .eyebrow a { color: var(--accent); }
+  h1.title {
+    font-family: "Space Grotesk", sans-serif; font-weight: 700;
+    font-size: clamp(2rem, 5.2vw, 2.9rem); line-height: 1.08; letter-spacing: -0.02em;
+    margin: 0 0 16px;
+  }
+  .meta { color: var(--muted); font-size: 0.9rem; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding-bottom: 26px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .meta .tag { background: var(--accent-soft); color: var(--accent); border-radius: 100px; padding: 2px 10px; font-family: "IBM Plex Mono", monospace; font-size: 0.75rem; }
+
+  .prose h2 {
+    font-family: "Space Grotesk", sans-serif; font-weight: 600;
+    font-size: 1.4rem; letter-spacing: -0.01em; margin: 42px 0 14px; scroll-margin-top: 76px;
+  }
+  .prose p { margin: 0 0 20px; }
+  .prose ol { margin: 0 0 20px; padding-left: 22px; }
+  .prose ol li { margin-bottom: 14px; }
+  .prose code {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.86em;
+    background: var(--code-bg); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 5px;
+  }
+  .prose pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; overflow-x: auto; margin: 0 0 24px;
+  }
+  .prose pre code { background: none; border: none; padding: 0; font-size: 0.84rem; line-height: 1.6; color: var(--text); }
+  .prose pre code .c { color: var(--muted); }
+
+  .post-nav { border-top: 1px solid var(--border); margin-top: 40px; padding: 28px 0 0; }
+  footer { border-top: 1px solid var(--border); padding: 26px 0 40px; color: var(--muted); font-size: 0.85rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer .mono { font-family: "IBM Plex Mono", monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <a class="brand" href="/"><span class="pulse" aria-hidden="true"></span>Alvaro Carvalho</a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/writing/">Writing</a>
+      <button class="theme-btn" id="themeToggle" aria-label="Toggle theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <article>
+    <div class="eyebrow"><a href="/writing/">← Writing</a></div>
+    <h1 class="title">The metric that quietly ate my Prometheus</h1>
+    <div class="meta">
+      <span>August · 2026</span><span>·</span><span>8 min read</span>
+      <span class="tag">observability</span><span class="tag">prometheus</span><span class="tag">cardinality</span>
+    </div>
+
+    <div class="prose">
+      <h2 id="s1">1. The symptom that doesn't add up</h2>
+      <p>It was a Monday, my sacred day for going back over whatever happened during the weekend. I always start with the highest-severity alerts, the ones that actually page our on-call, so I can understand what remediation was run and turn it into continuous improvement.</p>
+      <p>But something caught my eye: we had an unusual number of low-priority alerts. These are the predictive kind, built to work like smoke signals, a heads-up that something might be smoldering. Ignore them, and there is a chance it catches fire and starts eating into the stability of the system.</p>
+      <p>This one was telling me that one of our Prometheus components was using more memory than its usual baseline. That intrigued me, because it was not something I saw often. My own internal alarm went off, and I opened an incident triage to understand the behavior, even though nothing was actually broken. A lot of people would stop right there: no impact, no incident. That is where I disagree. Any behavior outside of what you expect, impact or not, is an incident, and it deserves to be investigated.</p>
+
+      <h2 id="s2">2. Finding the guilty job</h2>
+      <p>With the triage open, the first thing I pull up is our golden-signals dashboards for the Prometheus workloads, to find where the memory started climbing. The ramp began on Friday. Now I needed to know what had shipped that day, but before digging through release notes I wanted to make the troubleshooting more granular. I went to look at Prometheus's TSDB (time-series database) and spotted one metric with a suspiciously high cardinality. The next step was figuring out which Prometheus job was behind it, and I landed on three independent services growing in exactly the same way at exactly the same time. Three services moving in lockstep point at a shared cause, and the one thing these three had in common was their instrumentation library.</p>
+      <pre><code><span class="c"># ingestion per job over time — look for the ones that ramp</span>
+scrape_samples_scraped
+<span class="c"># or the biggest offenders right now:</span>
+topk(10, scrape_samples_scraped)</code></pre>
+
+      <h2 id="s3">3. From the metric down to the label</h2>
+      <p>Now that I had the jobs and the offending instrumentation library, I needed to trace which metric was leaking cardinality, and drill down further to a possibly malformed label. A badly ingested label (a unique user ID, a timestamp, a full URL) can blow up a metric's cardinality by creating a unique key-value combination for every new variation of the data.</p>
+      <p>I started by looking at which metrics in that library had the most series, and which one was creating more and more of them. With the offending metric in hand, all that was left was to find which label had the most distinct values, and after two simple PromQL queries, I had the culprit.</p>
+      <p>Then I moved to the next step: reproduce the behavior in a fresh environment and compare it against production.</p>
+      <pre><code><span class="c"># which metrics have the most series (/api/v1/status/tsdb also lists top metrics and label pairs)</span>
+sort_desc(count by(__name__)({__name__!=""}))
+
+<span class="c"># distinct values of a label within the offending metric</span>
+count(count by(&lt;label&gt;)(&lt;metric_name&gt;))</code></pre>
+
+      <h2 id="s4">4. The turn: cardinality that grows with pod age</h2>
+      <p>Inspecting the <code>/metrics</code> exposition directly on the pods, the difference between a fresh environment and a production one under real use made the leak obvious. The same metric, the authentication timer, had 62 series on a freshly started test pod and 55,990 series on a production pod that had been alive for three days.</p>
+      <p>This was not traffic, it was accumulation. A pod taking more requests should not, on its own, carry nearly a thousand times more series than a new one. What changes between the two is not load, it is uptime. And that changes the nature of the problem: this is not a usage spike, it is something that only grows.</p>
+
+      <h2 id="s5">5. Fixed cost vs. a real leak</h2>
+      <p>Because a Micrometer Timer never releases a meter once it is registered, every new tag combination creates series that only go away when the process dies. That is why cardinality accumulates monotonically with the age of the pod, and why the curve on the graph is a continuous ramp with no plateau.</p>
+      <p>But here is a distinction that separates the scare from the real diagnosis: not every fat label is the villain. When I looked at distinct values per label, the biggest numbers were not necessarily the culprits. Some labels carried business dimensions with a large but finite universe. They are expensive, a few thousand series per metric, but the cost is fixed: eventually every possible value has shown up and the count settles into a plateau.</p>
+      <p>The engine of the ramp was something else. One of the labels carried a detail from the rotating proxy's connection session, and that value's universe is unbounded by nature: every new session invents a value that never repeats. That is the distinction that matters, and the one this section is named after: a finite universe is fixed cost, an unbounded universe is a leak.</p>
+      <p>And the test that tells them apart is simple, you just watch the curve over time. Run the count of distinct values per label across a few days, and the fixed-cost label settles while the leaking one climbs without stopping. That, in fact, is how I corrected one of my own hypotheses along the way: a label I had flagged as suspicious early on turned out to be harmless once its count leveled off, while the proxy-session one kept climbing in a straight line.</p>
+      <pre><code><span class="c"># run it across days: does it settle (fixed cost) or ramp (unbounded universe)?</span>
+count(count by(&lt;label&gt;)(&lt;metric_name&gt;))</code></pre>
+
+      <h2 id="s6">6. Confirming it hurts downstream</h2>
+      <p>The job's ingestion volume was roughly 4x what it had been 7 days earlier. Comparing with <code>avg</code> instead of <code>sum</code> gave a similar result, which confirms the growth is per-pod (cardinality), not replica or HPA scaling.</p>
+      <p>The ingest dashboard shows message throughput climbing from ~50/s to ~68/s, accelerating on the day the memory started rising, and per-zone consumer lag spiking higher and higher. If that lag keeps growing, the risk is ingestion delay, gaps in the data, and memory pressure on the ingesters themselves, which hold the active series in RAM.</p>
+      <pre><code><span class="c"># active series and creation rate on the backend (e.g. Mimir/Cortex ingesters)</span>
+cortex_ingester_memory_series
+rate(cortex_ingester_memory_series_created_total[5m])
+
+<span class="c"># per-pod vs replica scaling: if sum and avg tell the same story, it is series per pod</span>
+sum(scrape_samples_scraped{job="&lt;job&gt;"})
+avg(scrape_samples_scraped{job="&lt;job&gt;"})</code></pre>
+
+      <h2 id="s7">7. The fix, and how not to repeat it</h2>
+      <p>After all this analysis I went back to the release notes for what had shipped, and found changes that lined up with the diagnosis. During the triage I confirmed it was indeed an incident, the process was accepted, and a low-priority incident flow was started.</p>
+      <p>To relieve Mimir's memory in the moment, you can drop the metric at scrape time via <code>metric_relabel_configs</code>:</p>
+      <pre><code>metric_relabel_configs:
+  - source_labels: [__name__]
+    regex: &lt;metric_name&gt;
+    action: drop</code></pre>
+      <p>This cuts the cardinality reaching the TSDB, but not the JVM's memory, which keeps inflating through the exposition. Avoid <code>labeldrop</code> on the specific labels, because collapsing the series makes the sum/count/max components collide on the same timestamp, and Prometheus discards samples arbitrarily, corrupting the metric.</p>
+      <p>So I took another route. A pod rollout gives immediate but temporary relief, since new pods return to baseline and start accumulating again. It puts out the fire, it is not the solution. And knowing our CI/CD process, I knew that rolling the deployments that were offending the TSDB would not affect the product, which gave me the confidence to run that mitigation.</p>
+      <p>I then engaged the teams that own the metric and handed them the RCA with a few suggestions:</p>
+      <ol>
+        <li>Remove the offending labels from the request timers' tags. A proxy connection-session detail is not a metric dimension, and it is the source of the unbounded growth. If the data is needed, it belongs in a log, a trace, or an exemplar, not in a time-series label. This is the change that stops the ramp, and it covers all three services at once, since the library is shared.</li>
+        <li>Drop the redundancy between two distinct labels. Since they are almost 1:1 correlated, keeping one of them preserves the information without duplicating cardinality.</li>
+        <li>Decide on the remaining dimension. The team should confirm what the label actually indexes. If it is finite, it can stay as a dimension at a fixed cost of a few thousand series per metric that saturates over time. If it is more granular, the growth is unbounded and the dimension needs to go, or become a top-N grouping.</li>
+      </ol>
+      <p>In the end, what stays with me from this investigation is not the fix, it is how silent the problem was. Cardinality almost never announces itself: no error, no failed request, no high-priority page. It just accumulates, series by series, until it becomes memory pressure down the line. That is why that low-priority predictive alert was worth so much, and why I opened an incident with no visible impact at all. If I had waited for the system to hurt before acting, the conversation would not have been about a badly instrumented metric, it would have been about ingesters falling over in production.</p>
+    </div>
+
+    <div class="post-nav">
+      <a href="/writing/">← Back to all writing</a>
+    </div>
+  </article>
+</main>
+
+<footer class="wrap">
+  <span>© <span id="year"></span> Alvaro Carvalho</span>
+  <span class="mono">Senior SRE · Teresópolis, BR</span>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement, KEY = "ac-theme", stored = null;
+    try { stored = localStorage.getItem(KEY); } catch (e) {}
+    if (stored === "dark" || stored === "light") root.setAttribute("data-theme", stored);
+    function isDark() {
+      var t = root.getAttribute("data-theme");
+      if (t) return t === "dark";
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+    var btn = document.getElementById("themeToggle");
+    if (btn) btn.addEventListener("click", function () {
+      var next = isDark() ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+    });
+    var y = document.getElementById("year"); if (y) y.textContent = new Date().getFullYear();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Writing — Alvaro Carvalho</title>
+<meta name="description" content="Notes from production: reliability, observability, and the failures that are hard to see. Writing by Alvaro Carvalho, Senior SRE.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f6;
+    --text: #14203a; --muted: #566072; --border: rgba(20,32,58,0.12);
+    --accent: #0c9c8a; --accent-soft: rgba(12,156,138,0.12); --warm: #c0692a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1420; --surface: #161f2e; --surface-2: #1c2740;
+      --text: #e7ecf4; --muted: #93a1b8; --border: rgba(255,255,255,0.09);
+      --accent: #55d6c2; --accent-soft: rgba(85,214,194,0.13); --warm: #f2a65a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1420; --surface: #161f2e; --surface-2: #1c2740;
+    --text: #e7ecf4; --muted: #93a1b8; --border: rgba(255,255,255,0.09);
+    --accent: #55d6c2; --accent-soft: rgba(85,214,194,0.13); --warm: #f2a65a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "IBM Plex Sans", system-ui, sans-serif; font-size: 16px; line-height: 1.65; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration: none; }
+  .wrap { width: 100%; max-width: 720px; margin: 0 auto; padding: 0 24px; }
+
+  header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .brand { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 1.02rem; letter-spacing: -0.01em; display: flex; align-items: center; gap: 9px; }
+  .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--accent-soft); animation: pulse 2.6s ease-out infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--accent-soft); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+  nav { display: flex; align-items: center; gap: 22px; }
+  nav a { color: var(--muted); font-size: 0.92rem; transition: color 0.15s; }
+  nav a:hover { color: var(--text); }
+  .theme-btn { background: none; border: 1px solid var(--border); color: var(--muted); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: grid; place-items: center; }
+  .theme-btn:hover { color: var(--text); border-color: var(--muted); }
+
+  .head { padding: 64px 0 18px; }
+  h1 { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: clamp(2.2rem, 6vw, 3rem); letter-spacing: -0.02em; margin: 0 0 12px; }
+  .intro { color: var(--muted); font-size: 1.08rem; max-width: 54ch; margin: 0; }
+
+  .posts { padding: 26px 0 20px; }
+  .post { display: block; padding: 24px 0; border-top: 1px solid var(--border); transition: opacity 0.15s; }
+  .post:hover .post-title { color: var(--accent); }
+  .post-date { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
+  .post-title { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 1.25rem; letter-spacing: -0.01em; margin: 0 0 7px; transition: color 0.15s; }
+  .post-dek { color: var(--muted); font-size: 0.97rem; margin: 0 0 10px; max-width: 62ch; }
+  .post-tags { display: flex; gap: 7px; flex-wrap: wrap; }
+  .post-tags span { background: var(--accent-soft); color: var(--accent); border-radius: 100px; padding: 2px 10px; font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; }
+
+  footer { border-top: 1px solid var(--border); padding: 26px 0 40px; margin-top: 24px; color: var(--muted); font-size: 0.85rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer .mono { font-family: "IBM Plex Mono", monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="/"><span class="pulse" aria-hidden="true"></span>Alvaro Carvalho</a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/writing/">Writing</a>
+      <button class="theme-btn" id="themeToggle" aria-label="Toggle theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="head">
+    <h1>Writing</h1>
+    <p class="intro">Notes from production: reliability, observability, and the failures that are hard to see.</p>
+  </div>
+
+  <div class="posts">
+    <a class="post" href="/writing/the-metric-that-ate-my-prometheus/">
+      <div class="post-date">2026</div>
+      <h2 class="post-title">The metric that quietly ate my Prometheus</h2>
+      <p class="post-dek">A slow, silent memory ramp that turned out to be a client-side cardinality leak growing with pod age. How I tracked it from symptom to the exact label, and why not every fat label is the villain.</p>
+      <div class="post-tags"><span>observability</span><span>prometheus</span><span>cardinality</span></div>
+    </a>
+  </div>
+</main>
+
+<footer class="wrap">
+  <span>© <span id="year"></span> Alvaro Carvalho</span>
+  <span class="mono">Senior SRE · Teresópolis, BR</span>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement, KEY = "ac-theme", stored = null;
+    try { stored = localStorage.getItem(KEY); } catch (e) {}
+    if (stored === "dark" || stored === "light") root.setAttribute("data-theme", stored);
+    function isDark() { var t = root.getAttribute("data-theme"); if (t) return t === "dark"; return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches; }
+    var btn = document.getElementById("themeToggle");
+    if (btn) btn.addEventListener("click", function () { var next = isDark() ? "light" : "dark"; root.setAttribute("data-theme", next); try { localStorage.setItem(KEY, next); } catch (e) {} });
+    var y = document.getElementById("year"); if (y) y.textContent = new Date().getFullYear();
+  })();
+</script>
+</body>
+</html>
