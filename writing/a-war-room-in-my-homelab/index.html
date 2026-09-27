@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>I built an incident war room inside my homelab — Alvaro Carvalho</title>
-<meta name="description" content="A kubeadm homelab that grows from hand-written YAML to GitOps, a hand-rolled Prometheus stack, and a pixel-art incident simulator running behind Traefik.">
+<meta name="description" content="How a Kubernetes homelab built for CKA practice turned into Incident War Room, a playful way to rehearse the incident process.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -120,7 +120,7 @@
     <div class="eyebrow"><a href="/writing/">← Writing</a></div>
     <h1 class="title">I built an incident war room inside my homelab</h1>
     <div class="meta">
-      <span>September · 2026</span><span>·</span><span>6 min read</span>
+      <span>September · 2026</span><span>·</span><span>3 min read</span>
       <span class="tag">kubernetes</span><span class="tag">homelab</span><span class="tag">incident-response</span>
     </div>
 
@@ -130,58 +130,22 @@
         <figcaption>INC-2026-002, mid-incident. The hypothesis is on the whiteboard, the NPCs are arguing about the DB pool, and I'm the SRE walking in.</figcaption>
       </figure>
 
-      <h2 id="s1">1. Why a homelab, and why this one</h2>
-      <p>I've been studying for the CKA, and I learned pretty quickly that managed clusters hide the parts the exam cares about. So I wanted a cluster I could break and rebuild on my own terms: a real <code>kubeadm</code> install, not a single-node toy, running on the laptop I already own.</p>
-      <p>The second reason is closer to my day job. As an SRE I spend a lot of time thinking about how teams respond to incidents, and 3am is a terrible time to learn your incident process. I wanted a place where I could rehearse a SEV-1 on purpose: pause it, speed it up, replay it. That's where the war room comes in, but it needed a cluster to live on first.</p>
+      <h2 id="s1">1. It started as a Kubernetes homelab</h2>
+      <p>I wanted to study for the CKA on a cluster I could break and rebuild on my own terms, so I built one on my Mac: a real kubeadm setup with one control plane and two workers.</p>
+      <p>The lab grows in levels. First everything by hand, plain YAML, one manifest at a time. Then Kustomize and Helm, to stop copy-pasting. Then GitOps, with GitHub Actions running the CI and Argo CD keeping the cluster in sync with Git. On top of that, a Prometheus and Grafana stack I wrote myself, so anything running in the cluster gets watched.</p>
 
-      <h2 id="s2">2. The cluster: real kubeadm on a Mac</h2>
-      <p>Everything runs on an Apple Silicon Mac. Multipass spins up three Ubuntu ARM64 VMs: one control plane and two workers. A set of idempotent scripts in <code>bootstrap/</code> takes care of the boring-but-important bits on each node (swap off, kernel modules, sysctl, containerd with <code>SystemdCgroup</code>), then runs <code>kubeadm init</code>, joins the workers and installs Calico.</p>
-      <pre><code>make up
-export KUBECONFIG=$HOME/.kube/homelab.conf
-kubectl get nodes -o wide</code></pre>
-      <p>Two small decisions I like here. First, the Kubernetes version is deliberately one minor behind the latest, so the very next exercise is a <code>kubeadm upgrade</code>. Second, the pod CIDR is <code>10.244.0.0/16</code> instead of Calico's default <code>192.168.0.0/16</code>, because Multipass on macOS already lives in <code>192.168.64.0/24</code> and my home network is in <code>192.168.x.x</code> too. That one took me a moment to figure out, and it's exactly the kind of thing a managed cluster never teaches you.</p>
+      <h2 id="s2">2. An empty cluster is boring</h2>
+      <p>At some point I had a cluster, pipelines and dashboards, and nothing worth running on them. Demo apps don't teach you much: they don't hold state, they don't break in interesting ways, and nobody cares when they go down.</p>
+      <p>I wanted a real app, reachable through an ingress, scraped by Prometheus, rolled out like any production service. And if I was going to build something anyway, it might as well be useful beyond the lab.</p>
 
-      <h2 id="s3">3. From hand-written YAML to GitOps</h2>
-      <p>The workloads move through three levels, and each one removes a bit of pain from the previous one:</p>
-      <ol>
-        <li><strong>Everything by hand.</strong> Plain manifests and <code>kubectl apply</code>: Deployments, Services, ConfigMaps, RBAC, DaemonSets. Tedious, and honestly the best YAML practice for the exam.</li>
-        <li><strong>Kustomize and Helm.</strong> The same workloads, with overlays and charts instead of copy-paste.</li>
-        <li><strong>CI/CD and GitOps.</strong> GitHub Actions owns the CI (lint, tests, image build, bumping the image tag in Git), and Argo CD runs inside the cluster and pulls from the repo in an app-of-apps pattern. Git is the source of truth, and since Argo pulls instead of being pushed to, nothing outside needs access to my cluster.</li>
-      </ol>
-      <p>The safety net starts on day one: every push runs <code>kubeconform</code> against the manifests, so a typo in a field name fails in CI instead of in the cluster.</p>
+      <h2 id="s3">3. So I built a war room</h2>
+      <p>My day job is reliability, and a big part of it is how teams respond when things go wrong. That part is hard to practice. You usually learn the incident process during a real incident, often at 3am, which is the worst possible time to learn anything.</p>
+      <p>So the app became <strong>Incident War Room</strong>. You open it in the browser, make a pixel-art avatar, pick a role (Incident Commander, SRE, Database, PM…) and walk into a 2D room. A scripted incident starts: latency climbs, the error rate spikes, NPC teammates fill the empty seats, throw out hypotheses and ask for updates. Your job is to take it from <em>investigating</em> all the way to <em>resolved</em>. You can pause it, speed it up, or run it again from the start.</p>
+      <p>It's a game, but the lessons are real: who is in command, who talks to the business, when you change the status and why. Most of incident response isn't debugging, it's coordination, and coordination gets better with practice.</p>
 
-      <h2 id="s4">4. Monitoring, the hand-rolled way</h2>
-      <p>I skipped kube-prometheus on purpose. It pins everything to a <code>monitoring</code> namespace, and more importantly, writing the stack myself meant writing the RBAC, the DaemonSet and the scrape config myself. So the <code>observability</code> namespace has Prometheus, Grafana, node-exporter and kube-state-metrics, all as plain YAML.</p>
-      <p>Prometheus discovers targets through the Kubernetes API: the API server, kubelet, cAdvisor, and any pod annotated with <code>prometheus.io/scrape: "true"</code>. That last rule matters later, because it means any app I deploy gets scraped with zero extra config.</p>
-      <p>There are rough edges I left in as homework. Prometheus and Grafana use <code>emptyDir</code>, so data disappears when the pod restarts (moving to PVCs with <code>local-path-provisioner</code> is on the list). And on kubeadm, etcd, the controller-manager and the scheduler only expose metrics on localhost, so they don't show up until you go and fix that.</p>
-
-      <h2 id="s5">5. The app: Incident War Room</h2>
-      <p>With a cluster and monitoring in place, I wanted a real app to run on it, something with state, WebSockets and metrics, not another hello-world. So I built a small incident simulator.</p>
-      <p>You open it in the browser, build a pixel-art avatar, pick a role (Incident Commander, SRE, Network, Backend, Database, Security, PM or Observer) and walk into a 2D war room with a table, wall monitors, a whiteboard and a server rack. Then a scripted scenario starts, like "Production API latency increased to 5s" or an expiring certificate:</p>
-      <ul>
-        <li>NPCs fill the empty roles, talk in the chat and raise hypotheses.</li>
-        <li>The simulated metrics (p99 latency, error rate, RPS, CPU, DB connections) degrade and recover as the story moves.</li>
-        <li>The incident follows a real lifecycle: <code>INVESTIGATING → IDENTIFIED → MITIGATING → MONITORING → RESOLVED</code>.</li>
-        <li>Chat commands like <code>/status</code>, <code>/hypothesis</code>, <code>/action</code> and <code>/set-status</code> drive the incident, and everything lands on a timeline.</li>
-        <li>You can pause, restart, or run it anywhere from 0.5x to 10x.</li>
-      </ul>
-      <p>Under the hood it's Spring Boot 3.5 on Java 21, with a React and Canvas 2D frontend (no sprites, everything is drawn in code) talking over REST and a WebSocket. The frontend build is packaged inside the Spring Boot jar, so it's a single container on a single port.</p>
-
-      <h2 id="s6">6. Getting it into the cluster, and reaching it through Traefik</h2>
-      <p>I didn't want Docker on the Mac, so the image is built inside a separate Multipass VM called <code>builder</code>, exported, and imported straight into containerd on each worker. No registry involved for local iterations, and the image is ARM64 because the VM is. In the GitOps flow, the same Dockerfile is built by GitHub Actions and published to a registry for Argo CD to roll out.</p>
-      <pre><code>make k8s-image      <span class="c"># build in the builder VM, import into w1 and w2</span>
-kubectl apply -f kubernetes/
-kubectl -n incident-warroom rollout status deploy/incident-warroom</code></pre>
-      <p>The Deployment is where a lot of CKA topics show up in one place: requests and limits, startup, liveness and readiness probes on a separate Actuator port (8081, never exposed by the Ingress), Pod Security <code>restricted</code> (non-root, read-only root filesystem, <code>drop ALL</code>), and a graceful shutdown that closes WebSockets with code 1012 so the browser reconnects on its own during a rollout.</p>
-      <p>For access, the path is browser → Traefik → Service → Pod. I picked Traefik as the Ingress controller because it proxies WebSockets without any extra annotations, which for a real-time app is the whole point. It's installed with Helm on a NodePort, and I point <code>warroom.local</code> at a worker.</p>
-      <pre><code>helm install traefik traefik/traefik -n traefik --create-namespace \
-  --set service.type=NodePort --set ports.web.nodePort=30080</code></pre>
-      <p>And because the pod carries the <code>prometheus.io/*</code> annotations, the Prometheus from section 4 picks it up on its own. There's a Grafana dashboard for the app in the repo, so the "fake" incident and the real telemetry of the pod running it sit side by side.</p>
-
-      <h2 id="s7">7. What I got out of it</h2>
-      <p>The obvious part is Kubernetes practice. Every deploy of the war room exercises probes, rollouts, security contexts, ingress and scraping, which is basically the CKA syllabus with a reason to care.</p>
-      <p>The less obvious part is the incident side. Running a scenario over and over made me notice how much of incident response isn't debugging at all: it's who is commanding, who is talking to the business, when the status changes and why. Those are skills you only build by practicing them, and it's a lot nicer to practice them with NPCs than during a real SEV-1.</p>
-      <p>Next up: moving the app's state from memory to PostgreSQL so it can run more than one replica, persistent storage for Prometheus and Grafana, and new scenarios. If you have a favorite incident you'd like to see turned into one, I'd love to hear it.</p>
+      <h2 id="s4">4. Where the two worlds meet</h2>
+      <p>The fun part is that the app closes the loop on the homelab. It ships through the same GitOps flow, sits behind Traefik, and shows up in Prometheus like any other service. Every deploy is Kubernetes practice, and every run of a scenario is incident practice. A fake SEV-1 runs on a cluster whose metrics are completely real.</p>
+      <p>What started as exam prep turned into something I'd actually like to share: a light, playful way to rehearse the incident process before it counts. If you have a favorite incident you'd like to see turned into a scenario, I'd love to hear it.</p>
     </div>
 
     <div class="post-nav">
