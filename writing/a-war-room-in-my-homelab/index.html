@@ -168,7 +168,7 @@ kubectl get nodes -o wide</code></pre>
       <p>Under the hood it's Spring Boot 3.5 on Java 21, with a React and Canvas 2D frontend (no sprites, everything is drawn in code) talking over REST and a WebSocket. The frontend build is packaged inside the Spring Boot jar, so it's a single container on a single port.</p>
 
       <h2 id="s6">6. Getting it into the cluster, and reaching it through Traefik</h2>
-      <p>I didn't want Docker on the Mac, so the image is built inside a separate Multipass VM called <code>builder</code>, exported, and imported straight into containerd on each worker. No registry involved (yet), and the image is ARM64 because the VM is.</p>
+      <p>I didn't want Docker on the Mac, so the image is built inside a separate Multipass VM called <code>builder</code>, exported, and imported straight into containerd on each worker. No registry involved for local iterations, and the image is ARM64 because the VM is. In the GitOps flow, the same Dockerfile is built by GitHub Actions and published to a registry for Argo CD to roll out.</p>
       <pre><code>make k8s-image      <span class="c"># build in the builder VM, import into w1 and w2</span>
 kubectl apply -f kubernetes/
 kubectl -n incident-warroom rollout status deploy/incident-warroom</code></pre>
