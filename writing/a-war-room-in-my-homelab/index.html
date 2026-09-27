@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>I built an incident war room inside my homelab — Alvaro Carvalho</title>
+<meta name="description" content="A kubeadm homelab that grows from hand-written YAML to GitOps, a hand-rolled Prometheus stack, and a pixel-art incident simulator running behind Traefik.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f6;
+    --text: #14203a; --muted: #566072; --border: rgba(20,32,58,0.12);
+    --accent: #0c9c8a; --accent-soft: rgba(12,156,138,0.12); --warm: #c0692a;
+    --code-bg: #f2f4f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1420; --surface: #161f2e; --surface-2: #1c2740;
+      --text: #e7ecf4; --muted: #93a1b8; --border: rgba(255,255,255,0.09);
+      --accent: #55d6c2; --accent-soft: rgba(85,214,194,0.13); --warm: #f2a65a;
+      --code-bg: #10192a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1420; --surface: #161f2e; --surface-2: #1c2740;
+    --text: #e7ecf4; --muted: #93a1b8; --border: rgba(255,255,255,0.09);
+    --accent: #55d6c2; --accent-soft: rgba(85,214,194,0.13); --warm: #f2a65a;
+    --code-bg: #10192a;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 17px; line-height: 1.7; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { width: 100%; max-width: 720px; margin: 0 auto; padding: 0 24px; }
+
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
+  }
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 60px; max-width: 720px; margin: 0 auto; padding: 0 24px; }
+  .brand { font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 1.02rem; letter-spacing: -0.01em; display: flex; align-items: center; gap: 9px; color: var(--text); }
+  .brand:hover { text-decoration: none; }
+  .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--accent-soft); animation: pulse 2.6s ease-out infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--accent-soft); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+  nav { display: flex; align-items: center; gap: 22px; }
+  nav a { color: var(--muted); font-size: 0.92rem; transition: color 0.15s; }
+  nav a:hover { color: var(--text); text-decoration: none; }
+  .theme-btn { background: none; border: 1px solid var(--border); color: var(--muted); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: grid; place-items: center; }
+  .theme-btn:hover { color: var(--text); border-color: var(--muted); }
+
+  article { padding: 52px 0 20px; }
+  .eyebrow { color: var(--accent); font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; margin-bottom: 14px; }
+  .eyebrow a { color: var(--accent); }
+  h1.title {
+    font-family: "Space Grotesk", sans-serif; font-weight: 700;
+    font-size: clamp(2rem, 5.2vw, 2.9rem); line-height: 1.08; letter-spacing: -0.02em;
+    margin: 0 0 16px;
+  }
+  .meta { color: var(--muted); font-size: 0.9rem; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding-bottom: 26px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .meta .tag { background: var(--accent-soft); color: var(--accent); border-radius: 100px; padding: 2px 10px; font-family: "IBM Plex Mono", monospace; font-size: 0.75rem; }
+
+  .prose h2 {
+    font-family: "Space Grotesk", sans-serif; font-weight: 600;
+    font-size: 1.4rem; letter-spacing: -0.01em; margin: 42px 0 14px; scroll-margin-top: 76px;
+  }
+  .prose p { margin: 0 0 20px; }
+  .prose ol { margin: 0 0 20px; padding-left: 22px; }
+  .prose ol li { margin-bottom: 14px; }
+  .prose code {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.86em;
+    background: var(--code-bg); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 5px;
+  }
+  .prose pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; overflow-x: auto; margin: 0 0 24px;
+  }
+  .prose pre code { background: none; border: none; padding: 0; font-size: 0.84rem; line-height: 1.6; color: var(--text); }
+  .prose pre code .c { color: var(--muted); }
+
+  .prose ul { margin: 0 0 20px; padding-left: 22px; }
+  .prose ul li { margin-bottom: 8px; }
+  .prose figure { margin: 8px 0 28px; }
+  .prose figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--border); }
+  .prose figcaption { color: var(--muted); font-size: 0.86rem; margin-top: 10px; }
+
+  .post-nav { border-top: 1px solid var(--border); margin-top: 40px; padding: 28px 0 0; }
+  footer { border-top: 1px solid var(--border); padding: 26px 0 40px; color: var(--muted); font-size: 0.85rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer .mono { font-family: "IBM Plex Mono", monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <a class="brand" href="/"><span class="pulse" aria-hidden="true"></span>Alvaro Carvalho</a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/writing/">Writing</a>
+      <button class="theme-btn" id="themeToggle" aria-label="Toggle theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <article>
+    <div class="eyebrow"><a href="/writing/">← Writing</a></div>
+    <h1 class="title">I built an incident war room inside my homelab</h1>
+    <div class="meta">
+      <span>September · 2026</span><span>·</span><span>6 min read</span>
+      <span class="tag">kubernetes</span><span class="tag">homelab</span><span class="tag">incident-response</span>
+    </div>
+
+    <div class="prose">
+      <figure>
+        <img src="war-room.webp" alt="The Incident War Room app: a pixel-art team sits around a table during a SEV-1, with p99 latency, error rate and requests per second on the wall monitors, a hypothesis on the whiteboard and the incident panel on the right" width="2000" height="1043" loading="eager">
+        <figcaption>INC-2026-002, mid-incident. The hypothesis is on the whiteboard, the NPCs are arguing about the DB pool, and I'm the SRE walking in.</figcaption>
+      </figure>
+
+      <h2 id="s1">1. Why a homelab, and why this one</h2>
+      <p>I've been studying for the CKA, and I learned pretty quickly that managed clusters hide the parts the exam cares about. So I wanted a cluster I could break and rebuild on my own terms: a real <code>kubeadm</code> install, not a single-node toy, running on the laptop I already own.</p>
+      <p>The second reason is closer to my day job. As an SRE I spend a lot of time thinking about how teams respond to incidents, and 3am is a terrible time to learn your incident process. I wanted a place where I could rehearse a SEV-1 on purpose: pause it, speed it up, replay it. That's where the war room comes in, but it needed a cluster to live on first.</p>
+
+      <h2 id="s2">2. The cluster: real kubeadm on a Mac</h2>
+      <p>Everything runs on an Apple Silicon Mac. Multipass spins up three Ubuntu ARM64 VMs: one control plane and two workers. A set of idempotent scripts in <code>bootstrap/</code> takes care of the boring-but-important bits on each node (swap off, kernel modules, sysctl, containerd with <code>SystemdCgroup</code>), then runs <code>kubeadm init</code>, joins the workers and installs Calico.</p>
+      <pre><code>make up
+export KUBECONFIG=$HOME/.kube/homelab.conf
+kubectl get nodes -o wide</code></pre>
+      <p>Two small decisions I like here. First, the Kubernetes version is deliberately one minor behind the latest, so the very next exercise is a <code>kubeadm upgrade</code>. Second, the pod CIDR is <code>10.244.0.0/16</code> instead of Calico's default <code>192.168.0.0/16</code>, because Multipass on macOS already lives in <code>192.168.64.0/24</code> and my home network is in <code>192.168.x.x</code> too. That one took me a moment to figure out, and it's exactly the kind of thing a managed cluster never teaches you.</p>
+
+      <h2 id="s3">3. From hand-written YAML to GitOps</h2>
+      <p>The workloads are meant to evolve in levels, each one removing a bit of pain from the previous one:</p>
+      <ol>
+        <li><strong>Everything by hand.</strong> Plain manifests and <code>kubectl apply</code>: Deployments, Services, ConfigMaps, RBAC, DaemonSets. Tedious, and honestly the best YAML practice for the exam.</li>
+        <li><strong>Kustomize and Helm.</strong> The same workloads, with overlays and charts instead of copy-paste.</li>
+        <li><strong>CI/CD and GitOps.</strong> GitHub Actions does the CI (lint, tests, image build, bumping the image tag in Git), and Argo CD runs inside the cluster and pulls from the repo in an app-of-apps pattern. Since Argo pulls, nothing outside needs access to my cluster.</li>
+      </ol>
+      <p>Even at level one there's already a safety net: every push runs <code>kubeconform</code> against the manifests, so a typo in a field name fails in CI instead of in the cluster.</p>
+
+      <h2 id="s4">4. Monitoring, the hand-rolled way</h2>
+      <p>I skipped kube-prometheus on purpose. It pins everything to a <code>monitoring</code> namespace, and more importantly, writing the stack myself meant writing the RBAC, the DaemonSet and the scrape config myself. So the <code>observability</code> namespace has Prometheus, Grafana, node-exporter and kube-state-metrics, all as plain YAML.</p>
+      <p>Prometheus discovers targets through the Kubernetes API: the API server, kubelet, cAdvisor, and any pod annotated with <code>prometheus.io/scrape: "true"</code>. That last rule matters later, because it means any app I deploy gets scraped with zero extra config.</p>
+      <p>There are rough edges I left in as homework. Prometheus and Grafana use <code>emptyDir</code>, so data disappears when the pod restarts (moving to PVCs with <code>local-path-provisioner</code> is on the list). And on kubeadm, etcd, the controller-manager and the scheduler only expose metrics on localhost, so they don't show up until you go and fix that.</p>
+
+      <h2 id="s5">5. The app: Incident War Room</h2>
+      <p>With a cluster and monitoring in place, I wanted a real app to run on it, something with state, WebSockets and metrics, not another hello-world. So I built a small incident simulator.</p>
+      <p>You open it in the browser, build a pixel-art avatar, pick a role (Incident Commander, SRE, Network, Backend, Database, Security, PM or Observer) and walk into a 2D war room with a table, wall monitors, a whiteboard and a server rack. Then a scripted scenario starts, like "Production API latency increased to 5s" or an expiring certificate:</p>
+      <ul>
+        <li>NPCs fill the empty roles, talk in the chat and raise hypotheses.</li>
+        <li>The simulated metrics (p99 latency, error rate, RPS, CPU, DB connections) degrade and recover as the story moves.</li>
+        <li>The incident follows a real lifecycle: <code>INVESTIGATING → IDENTIFIED → MITIGATING → MONITORING → RESOLVED</code>.</li>
+        <li>Chat commands like <code>/status</code>, <code>/hypothesis</code>, <code>/action</code> and <code>/set-status</code> drive the incident, and everything lands on a timeline.</li>
+        <li>You can pause, restart, or run it anywhere from 0.5x to 10x.</li>
+      </ul>
+      <p>Under the hood it's Spring Boot 3.5 on Java 21, with a React and Canvas 2D frontend (no sprites, everything is drawn in code) talking over REST and a WebSocket. The frontend build is packaged inside the Spring Boot jar, so it's a single container on a single port.</p>
+
+      <h2 id="s6">6. Getting it into the cluster, and reaching it through Traefik</h2>
+      <p>I didn't want Docker on the Mac, so the image is built inside a separate Multipass VM called <code>builder</code>, exported, and imported straight into containerd on each worker. No registry involved (yet), and the image is ARM64 because the VM is.</p>
+      <pre><code>make k8s-image      <span class="c"># build in the builder VM, import into w1 and w2</span>
+kubectl apply -f kubernetes/
+kubectl -n incident-warroom rollout status deploy/incident-warroom</code></pre>
+      <p>The Deployment is where a lot of CKA topics show up in one place: requests and limits, startup, liveness and readiness probes on a separate Actuator port (8081, never exposed by the Ingress), Pod Security <code>restricted</code> (non-root, read-only root filesystem, <code>drop ALL</code>), and a graceful shutdown that closes WebSockets with code 1012 so the browser reconnects on its own during a rollout.</p>
+      <p>For access, the path is browser → Traefik → Service → Pod. I picked Traefik as the Ingress controller because it proxies WebSockets without any extra annotations, which for a real-time app is the whole point. It's installed with Helm on a NodePort, and I point <code>warroom.local</code> at a worker.</p>
+      <pre><code>helm install traefik traefik/traefik -n traefik --create-namespace \
+  --set service.type=NodePort --set ports.web.nodePort=30080</code></pre>
+      <p>And because the pod carries the <code>prometheus.io/*</code> annotations, the Prometheus from section 4 picks it up on its own. There's a Grafana dashboard for the app in the repo, so the "fake" incident and the real telemetry of the pod running it sit side by side.</p>
+
+      <h2 id="s7">7. What I got out of it</h2>
+      <p>The obvious part is Kubernetes practice. Every deploy of the war room exercises probes, rollouts, security contexts, ingress and scraping, which is basically the CKA syllabus with a reason to care.</p>
+      <p>The less obvious part is the incident side. Running a scenario over and over made me notice how much of incident response isn't debugging at all: it's who is commanding, who is talking to the business, when the status changes and why. Those are skills you only build by practicing them, and it's a lot nicer to practice them with NPCs than during a real SEV-1.</p>
+      <p>Next up: finishing the GitOps loop with Argo CD, moving the app's state from memory to PostgreSQL so it can run more than one replica, and writing new scenarios. If you have a favorite incident you'd like to see turned into one, I'd love to hear it.</p>
+      <p>The code is on GitHub: <a href="https://github.com/alvaroscarvalho/homelab-sre">alvaroscarvalho/homelab-sre</a>.</p>
+    </div>
+
+    <div class="post-nav">
+      <a href="/writing/">← Back to all writing</a>
+    </div>
+  </article>
+</main>
+
+
+<footer class="wrap">
+  <span>© <span id="year"></span> Alvaro Carvalho</span>
+  <span class="mono">Senior SRE · Teresópolis, BR</span>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement, KEY = "ac-theme", stored = null;
+    try { stored = localStorage.getItem(KEY); } catch (e) {}
+    if (stored === "dark" || stored === "light") root.setAttribute("data-theme", stored);
+    function isDark() {
+      var t = root.getAttribute("data-theme");
+      if (t) return t === "dark";
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+    var btn = document.getElementById("themeToggle");
+    if (btn) btn.addEventListener("click", function () {
+      var next = isDark() ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+    });
+    var y = document.getElementById("year"); if (y) y.textContent = new Date().getFullYear();
+  })();
+</script>
+</body>
+</html>
